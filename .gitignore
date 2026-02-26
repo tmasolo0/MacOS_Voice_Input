@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+*.xcodeproj/
+xcuserdata/
+
+# Whisper models (too large for git)
+/models/
+
+# Build artifacts
+*.dmg
+
+# IDE / tools
+.claude/
+.env
+logs/
+.planning/
+CLAUDE.md
+
+# Build artifacts
+*.app
+*.dSYM
+DerivedData/

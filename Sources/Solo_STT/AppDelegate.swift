@@ -1,0 +1,306 @@
+import AppKit
+import SwiftUI
+
+class AppDelegate: NSObject, NSApplicationDelegate {
+    let appState = AppState()
+    private var statusItemManager: StatusItemManager?
+    var modelService: ModelService?
+    private var onboardingWindow: NSWindow?
+    private var settingsWindow: NSWindow?
+    private var aboutWindow: NSWindow?
+    private var hotkeyService: HotkeyService?
+    private var soundFeedbackService: SoundFeedbackService?
+    private var audioRecordingService: AudioRecordingService?
+    private var transcriptionService: TranscriptionService?
+    private var textProcessingService: TextProcessingService?
+    private var textInsertionService: TextInsertionService?
+    private var targetApp: NSRunningApplication?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Защита от двойного запуска
+        let dominated = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
+        if dominated.count > 1 {
+            print("[Solo_STT] Another instance already running, quitting")
+            NSApp.terminate(nil)
+            return
+        }
+
+        modelService = ModelService(appState: appState)
+        statusItemManager = StatusItemManager(appState: appState, modelService: modelService!)
+        statusItemManager?.onOpenSettings = { [weak self] in
+            self?.showSettingsWindow()
+        }
+        statusItemManager?.onOpenAbout = { [weak self] in
+            self?.showAboutWindow()
+        }
+        statusItemManager?.setup()
+
+        // Create services
+        soundFeedbackService = SoundFeedbackService()
+        audioRecordingService = AudioRecordingService()
+        audioRecordingService?.selectedDeviceUID = appState.selectedAudioDeviceUID
+        audioRecordingService?.normalizeAudio = appState.audioNormalization
+        transcriptionService = TranscriptionService(modelService: modelService!, appState: appState)
+        textProcessingService = TextProcessingService()
+        textInsertionService = TextInsertionService()
+
+        // Wire hotkey callbacks
+        hotkeyService = HotkeyService()
+        hotkeyService?.keyCode = Int64(appState.hotkeyKeyCode)
+        hotkeyService?.isModifier = appState.hotkeyIsModifier
+        hotkeyService?.onKeyDown = { [weak self] in
+            self?.handleRecordingStart()
+        }
+        hotkeyService?.onKeyUp = { [weak self] in
+            self?.handleRecordingStop()
+        }
+        hotkeyService?.onSecureInputChanged = { [weak self] isSecure in
+            self?.appState.isSecureInputActive = isSecure
+        }
+        hotkeyService?.start()
+
+        checkPermissions()
+
+        // Start audio engine early so Bluetooth devices have time to activate
+        audioRecordingService?.ensureEngineRunning()
+
+        if !appState.hasCompletedOnboarding {
+            showOnboardingWindow()
+        } else if appState.currentProvider == .local {
+            // Local mode — load model in background
+            let variant = appState.selectedModel
+            print("[Solo_STT] Loading model: \(variant)")
+            Task {
+                do {
+                    try await modelService?.downloadAndLoad(variant: variant)
+                } catch {
+                    print("[Solo_STT] Failed to load model: \(error)")
+                }
+            }
+        } else {
+            print("[Solo_STT] Provider: \(appState.currentProvider.displayName), skipping local model load")
+        }
+    }
+
+    private func showOnboardingWindow() {
+        guard let modelService else { return }
+
+        let onboardingView = OnboardingView(
+            appState: appState,
+            modelService: modelService
+        )
+        let hostingController = NSHostingController(rootView: onboardingView)
+
+        let window = NSWindow(contentViewController: hostingController)
+        window.title = "Solo STT — Настройка"
+        window.setContentSize(NSSize(width: 500, height: 450))
+        window.center()
+        window.styleMask = [.titled, .closable]
+        window.isReleasedWhenClosed = false
+        window.makeKeyAndOrderFront(nil)
+
+        NSApplication.shared.activate(ignoringOtherApps: true)
+
+        onboardingWindow = window
+    }
+
+    func showSettingsWindow() {
+        if let settingsWindow, settingsWindow.isVisible {
+            settingsWindow.makeKeyAndOrderFront(nil)
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            return
+        }
+
+        guard let modelService else { return }
+        let settingsView = SettingsView(
+            appState: appState,
+            modelService: modelService,
+            onHotkeyChanged: { [weak self] in
+                guard let self else { return }
+                self.hotkeyService?.keyCode = Int64(self.appState.hotkeyKeyCode)
+                self.hotkeyService?.isModifier = self.appState.hotkeyIsModifier
+            }
+        )
+        let hostingController = NSHostingController(rootView: settingsView)
+
+        let window = NSWindow(contentViewController: hostingController)
+        window.title = "Solo STT — Настройки"
+        window.setContentSize(NSSize(width: 420, height: 620))
+        window.center()
+        window.styleMask = [.titled, .closable, .resizable]
+        window.minSize = NSSize(width: 420, height: 500)
+        window.maxSize = NSSize(width: 420, height: 750)
+        window.isReleasedWhenClosed = false
+        window.makeKeyAndOrderFront(nil)
+
+        NSApplication.shared.activate(ignoringOtherApps: true)
+
+        settingsWindow = window
+    }
+
+    private func showAboutWindow() {
+        if let aboutWindow, aboutWindow.isVisible {
+            aboutWindow.makeKeyAndOrderFront(nil)
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            return
+        }
+
+        let hostingController = NSHostingController(rootView: AboutView())
+
+        let window = NSWindow(contentViewController: hostingController)
+        window.title = "О программе"
+        window.setContentSize(NSSize(width: 300, height: 300))
+        window.center()
+        window.styleMask = [.titled, .closable]
+        window.isReleasedWhenClosed = false
+        window.makeKeyAndOrderFront(nil)
+
+        NSApplication.shared.activate(ignoringOtherApps: true)
+
+        aboutWindow = window
+    }
+
+    // MARK: - Recording Pipeline
+
+    private func handleRecordingStart() {
+        // Guard: must be ready to transcribe (local model loaded OR cloud with API key)
+        guard appState.isReadyToTranscribe else {
+            print("[Solo_STT] Not ready to transcribe, ignoring hotkey")
+            return
+        }
+        // Allow restart from error state
+        if case .error = appState.recordingState {
+            appState.recordingState = .idle
+        }
+        // Guard: must be idle
+        guard case .idle = appState.recordingState else { return }
+
+        // Remember the frontmost app before recording starts
+        targetApp = NSWorkspace.shared.frontmostApplication
+
+        // Ensure audio engine is running before starting recording
+        if let engineError = audioRecordingService?.ensureEngineRunning() {
+            self.appState.recordingState = .error(engineError.localizedDescription)
+            print("[Solo_STT] Engine not ready: \(engineError.localizedDescription)")
+            return
+        }
+
+        // Sync settings before recording
+        audioRecordingService?.normalizeAudio = appState.audioNormalization
+
+        // Start recording IMMEDIATELY to not lose first words
+        do {
+            try self.audioRecordingService?.startRecording()
+            self.appState.recordingState = .recording
+            // Play sound AFTER recording starts (brief Tink won't affect transcription)
+            soundFeedbackService?.playStart()
+            print("[Solo_STT] Recording started")
+        } catch {
+            self.appState.recordingState = .error(error.localizedDescription)
+            print("[Solo_STT] Failed to start recording: \(error)")
+        }
+    }
+
+    private func handleRecordingStop() {
+        // Guard: must be recording
+        guard case .recording = appState.recordingState else { return }
+
+        guard let audioRecordingService else { return }
+
+        // Grace period to capture trailing audio
+        DispatchQueue.main.asyncAfter(deadline: .now() + AudioRecordingService.stopDelay) { [weak self] in
+            guard let self else { return }
+            let result = audioRecordingService.stopRecording()
+            self.processRecordingResult(result)
+        }
+    }
+
+    private func processRecordingResult(_ result: AudioRecordingService.AudioRecordingResult) {
+        switch result {
+        case .tooShort(let duration):
+            print("[Solo_STT] Recording too short (\(String(format: "%.0f", duration * 1000))ms), skipping")
+            appState.recordingState = .idle
+            return
+
+        case .error(let error):
+            appState.recordingState = .error(error.localizedDescription)
+            soundFeedbackService?.playStop()
+            return
+
+        case .success(let samples, let duration):
+            // Play stop sound
+            soundFeedbackService?.playStop()
+            print("[Solo_STT] Recording stopped (\(String(format: "%.1f", duration))s), transcribing...")
+
+            // Transcribe, process, and insert asynchronously
+            appState.recordingState = .transcribing
+            Task {
+                do {
+                    guard let transcriptionService = self.transcriptionService else { return }
+                    let result = try await transcriptionService.transcribe(audioSamples: samples)
+
+                    // Process text (filler removal, punctuation, capitalization)
+                    let processedText = self.textProcessingService?.process(result.text) ?? result.text
+
+                    await MainActor.run {
+                        self.appState.lastTranscription = processedText
+                    }
+
+                    if processedText.isEmpty {
+                        await MainActor.run {
+                            self.appState.recordingState = .idle
+                        }
+                        print("[Solo_STT] Empty transcription after processing, skipping insertion")
+                        return
+                    }
+
+                    print("[Solo_STT] Transcription (\(result.language), \(String(format: "%.0f", result.latency * 1000))ms): \(processedText)")
+
+                    // Insert text at cursor
+                    let isSecure = await MainActor.run { self.appState.isSecureInputActive }
+                    await MainActor.run {
+                        self.appState.insertionState = isSecure ? .clipboardOnly : .inserting
+                    }
+
+                    await self.textInsertionService?.insert(processedText, secureInput: isSecure, targetApp: self.targetApp)
+                    self.targetApp = nil
+
+                    await MainActor.run {
+                        self.appState.insertionState = .idle
+                        self.appState.recordingState = .idle
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.appState.insertionState = .idle
+                        self.appState.recordingState = .error(error.localizedDescription)
+                        print("[Solo_STT] Transcription failed: \(error)")
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Permissions
+
+    private func checkPermissions() {
+        appState.accessibilityGranted = PermissionService.checkAccessibility()
+
+        if !appState.accessibilityGranted {
+            print("[Solo_STT] Accessibility permission not granted")
+        } else {
+            print("[Solo_STT] Accessibility permission granted")
+        }
+
+        Task {
+            let micGranted = await PermissionService.checkMicrophone()
+            await MainActor.run {
+                appState.microphoneGranted = micGranted
+                if micGranted {
+                    print("[Solo_STT] Microphone permission granted")
+                } else {
+                    print("[Solo_STT] Microphone permission not granted")
+                }
+            }
+        }
+    }
+}
