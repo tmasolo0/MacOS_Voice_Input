@@ -2,10 +2,6 @@ import Foundation
 import AVFoundation
 import Accelerate
 import AppKit
-import os
-
-private let audioLog = Logger(subsystem: "com.solo.stt", category: "Audio")
-
 class AudioRecordingService {
     private var audioEngine: AVAudioEngine?
     private var audioSamples: [Float] = []
@@ -13,6 +9,12 @@ class AudioRecordingService {
     private var isCollecting = false
     private var engineReady = false
     private var isRecreating = false
+    private var needsRecreateAfterRecording = false
+    private let samplesLock = NSLock()
+    private var lastTapTime: Date?
+
+    /// Tap считается мёртвым если не получал буферов дольше этого порога
+    private static let tapStaleThreshold: TimeInterval = 0.5
 
     /// UID выбранного аудиоустройства (nil = системное по умолчанию)
     var selectedDeviceUID: String?
@@ -48,8 +50,7 @@ class AudioRecordingService {
             do {
                 try AudioDeviceService.setInputDevice(uid: uid, on: engine)
             } catch {
-                print("[Solo_STT] BT device unavailable (\(uid)), using default mic")
-                audioLog.warning("Device \(uid) not found, using system default")
+                DiagnosticLogger.shared.warning("BT device unavailable (\(uid)), using default mic", category: "Audio")
             }
         }
 
@@ -60,7 +61,7 @@ class AudioRecordingService {
         let actualSampleRate = tapFormat?.sampleRate ?? Self.targetSampleRate
 
         guard actualSampleRate > 0 else {
-            audioLog.error("Input sampleRate is 0")
+            DiagnosticLogger.shared.error("Input sampleRate is 0", category: "Audio")
             throw AudioRecordingError.noAudioCaptured
         }
 
@@ -78,7 +79,7 @@ class AudioRecordingService {
         if needsConversion, let tf = tapFormat {
             converter = AVAudioConverter(from: tf, to: targetFormat)
             if converter == nil {
-                audioLog.error("Failed to create converter from \(tf.sampleRate)Hz to \(Self.targetSampleRate)Hz")
+                DiagnosticLogger.shared.error("Failed to create converter from \(tf.sampleRate)Hz to \(Self.targetSampleRate)Hz", category: "Audio")
                 throw AudioRecordingError.noAudioCaptured
             }
         }
@@ -116,6 +117,8 @@ class AudioRecordingService {
                 samples = Array(UnsafeBufferPointer(start: channelData[0], count: Int(buffer.frameLength)))
             }
 
+            self.samplesLock.lock()
+            self.lastTapTime = Date()
             if self.isCollecting {
                 self.audioSamples.append(contentsOf: samples)
             } else {
@@ -124,12 +127,13 @@ class AudioRecordingService {
                     self.preBuffer.removeFirst(self.preBuffer.count - Self.preBufferSamples)
                 }
             }
+            self.samplesLock.unlock()
         }
 
         try engine.start()
         audioEngine = engine
         engineReady = true
-        audioLog.info("Audio engine started (\(outputFormat.sampleRate)Hz/\(outputFormat.channelCount)ch)")
+        DiagnosticLogger.shared.info("Audio engine started (\(outputFormat.sampleRate)Hz/\(outputFormat.channelCount)ch, conversion=\(needsConversion ? 1 : 0))", category: "Audio")
 
         NotificationCenter.default.addObserver(
             self,
@@ -157,48 +161,70 @@ class AudioRecordingService {
     @discardableResult
     func ensureEngineRunning() -> Error? {
         if engineReady && audioEngine?.isRunning == true { return nil }
-        audioLog.warning("Engine not running, recreating")
+        DiagnosticLogger.shared.info("ensureEngineRunning: ready=\(engineReady), running=\(audioEngine?.isRunning == true) — recreating", category: "Audio")
         return recreateEngine()
     }
 
     func startRecording() throws {
-        if !engineReady || audioEngine?.isRunning != true {
-            audioLog.warning("Engine not running at startRecording, recreating")
+        let tapStale: Bool
+        samplesLock.lock()
+        tapStale = lastTapTime == nil || Date().timeIntervalSince(lastTapTime!) > Self.tapStaleThreshold
+        samplesLock.unlock()
+
+        if !engineReady || audioEngine?.isRunning != true || tapStale {
+            DiagnosticLogger.shared.info("Recreating engine before recording (ready=\(engineReady), running=\(audioEngine?.isRunning == true), tapStale=\(tapStale))", category: "Audio")
             if let err = recreateEngine() { throw err }
         }
 
+        needsRecreateAfterRecording = false
+        samplesLock.lock()
         audioSamples = preBuffer
         preBuffer = []
         isCollecting = true
+        samplesLock.unlock()
         recordingStartTime = Date()
+        DiagnosticLogger.shared.info("Recording started, preBuffer: \(audioSamples.count) samples", category: "Audio")
     }
 
     func stopRecording() -> AudioRecordingResult {
         guard engineReady else {
+            DiagnosticLogger.shared.warning("stopRecording: engineReady=false", category: "Audio")
             return .error(.noAudioCaptured)
         }
 
+        samplesLock.lock()
         isCollecting = false
+        let samples = audioSamples
+        audioSamples = []
+        samplesLock.unlock()
 
         let duration = Date().timeIntervalSince(recordingStartTime ?? Date())
+        DiagnosticLogger.shared.info("stopRecording: duration=\(String(format: "%.2f", duration))s, samples=\(samples.count), engineRunning=\(audioEngine?.isRunning == true)", category: "Audio")
+
         if duration < Self.minimumDuration {
-            audioSamples = []
             return .tooShort(duration: duration)
         }
 
-        var samples = audioSamples
-        audioSamples = []
-
         if samples.isEmpty {
-            audioLog.error("No audio samples after \(String(format: "%.1f", duration))s")
+            DiagnosticLogger.shared.error("No audio samples — engine may have stopped mid-recording", category: "Audio")
+            // Пересоздаём движок для следующей записи
+            _ = recreateEngine()
             return .error(.noAudioCaptured)
         }
 
+        var result = samples
         if normalizeAudio {
-            samples = Self.normalize(samples)
+            result = Self.normalize(result)
         }
 
-        return .success(samples: samples, duration: duration)
+        // Если движок нуждается в пересоздании (config change во время записи)
+        if needsRecreateAfterRecording {
+            needsRecreateAfterRecording = false
+            DiagnosticLogger.shared.info("Recreating engine after config change during recording", category: "Audio")
+            _ = recreateEngine()
+        }
+
+        return .success(samples: result, duration: duration)
     }
 
     // MARK: - Audio Normalization
@@ -216,34 +242,39 @@ class AudioRecordingService {
         // клиппинг защита
         var lo: Float = -1.0, hi: Float = 1.0
         vDSP_vclip(result, 1, &lo, &hi, &result, 1, vDSP_Length(samples.count))
-        audioLog.info("Audio normalized: RMS \(String(format: "%.4f", rms)) → gain \(String(format: "%.1f", gain))x")
+        DiagnosticLogger.shared.info("Audio normalized: RMS \(String(format: "%.4f", rms)) → gain \(String(format: "%.1f", gain))x", category: "Audio")
         return result
     }
 
     // MARK: - Route Change & Wake Handling
 
     @objc private func handleConfigurationChange(_ notification: Notification) {
-        guard !isRecreating, !isCollecting else { return }
+        guard !isRecreating else { return }
 
-        // Only recreate if the engine actually stopped
-        if audioEngine?.isRunning == true {
-            audioLog.info("Audio config changed but engine still running, ignoring")
+        if isCollecting {
+            DiagnosticLogger.shared.warning("Audio config changed DURING recording, will recreate after stop", category: "Audio")
+            needsRecreateAfterRecording = true
             return
         }
 
-        audioLog.warning("Audio config changed, engine stopped — recreating")
+        if audioEngine?.isRunning == true {
+            DiagnosticLogger.shared.info("Audio config changed but engine still running, ignoring", category: "Audio")
+            return
+        }
+
+        DiagnosticLogger.shared.info("Audio config changed, engine stopped — recreating", category: "Audio")
         recreateEngine()
     }
 
     @objc private func handleSystemWake(_ notification: Notification) {
-        audioLog.info("System woke up, checking engine")
+        DiagnosticLogger.shared.info("System woke up, checking engine", category: "Audio")
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             guard let self, !self.isCollecting else { return }
             if self.engineReady && self.audioEngine?.isRunning == true {
-                audioLog.info("Engine still running after wake, no action needed")
+                DiagnosticLogger.shared.info("Engine still running after wake, no action needed", category: "Audio")
                 return
             }
-            audioLog.warning("Engine not running after wake, recreating")
+            DiagnosticLogger.shared.warning("Engine not running after wake, recreating", category: "Audio")
             self.recreateEngine()
         }
     }
@@ -256,11 +287,11 @@ class AudioRecordingService {
         do {
             try prepareEngine()
             isRecreating = false
-            audioLog.info("Engine recreated successfully")
+            DiagnosticLogger.shared.info("Engine recreated successfully", category: "Audio")
             return nil
         } catch {
             isRecreating = false
-            audioLog.error("Failed to recreate engine: \(error.localizedDescription)")
+            DiagnosticLogger.shared.error("Failed to recreate engine: \(error.localizedDescription)", category: "Audio")
             return error
         }
     }
@@ -277,7 +308,8 @@ class AudioRecordingService {
         engineReady = false
         audioSamples = []
         preBuffer = []
-        audioLog.info("Audio engine stopped")
+        lastTapTime = nil
+        DiagnosticLogger.shared.info("Audio engine stopped", category: "Audio")
     }
 
     enum AudioRecordingResult {

@@ -69,17 +69,17 @@ class CloudTranscriptionClient {
 
         request.httpBody = body
 
-        print("[Solo_STT] Cloud request → \(url)")
+        DiagnosticLogger.shared.info("Cloud request → \(url)", category: "Cloud")
         let startTime = Date()
         let (data, response): (Data, URLResponse)
         do {
             (data, response) = try await URLSession.shared.data(for: request)
         } catch {
-            print("[Solo_STT] Cloud network error: \(error.localizedDescription)")
+            DiagnosticLogger.shared.error("Cloud network error: \(error.localizedDescription)", category: "Cloud")
             throw CloudError.networkError(error)
         }
         let latency = Date().timeIntervalSince(startTime)
-        print("[Solo_STT] Cloud response: \(String(format: "%.0f", latency * 1000))ms")
+        DiagnosticLogger.shared.info("Cloud response: \(String(format: "%.0f", latency * 1000))ms", category: "Cloud")
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw CloudError.decodingError
@@ -128,17 +128,17 @@ class CloudTranscriptionClient {
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
         request.httpBody = body
 
-        print("[Solo_STT] Custom server request → \(url)")
+        DiagnosticLogger.shared.info("Custom server request → \(url)", category: "Cloud")
         let startTime = Date()
         let (data, response): (Data, URLResponse)
         do {
             (data, response) = try await URLSession.shared.data(for: request)
         } catch {
-            print("[Solo_STT] Custom server network error: \(error.localizedDescription)")
+            DiagnosticLogger.shared.error("Custom server network error: \(error.localizedDescription)", category: "Cloud")
             throw CloudError.networkError(error)
         }
         let latency = Date().timeIntervalSince(startTime)
-        print("[Solo_STT] Custom server response: \(String(format: "%.0f", latency * 1000))ms")
+        DiagnosticLogger.shared.info("Custom server response: \(String(format: "%.0f", latency * 1000))ms", category: "Cloud")
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw CloudError.decodingError

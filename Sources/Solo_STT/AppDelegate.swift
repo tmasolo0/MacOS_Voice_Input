@@ -20,7 +20,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Защита от двойного запуска
         let dominated = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
         if dominated.count > 1 {
-            print("[Solo_STT] Another instance already running, quitting")
+            DiagnosticLogger.shared.warning("Another instance already running, quitting", category: "App")
             NSApp.terminate(nil)
             return
         }
@@ -69,16 +69,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else if appState.currentProvider == .local {
             // Local mode — load model in background
             let variant = appState.selectedModel
-            print("[Solo_STT] Loading model: \(variant)")
+            DiagnosticLogger.shared.info("Loading model: \(variant)", category: "Model")
             Task {
                 do {
                     try await modelService?.downloadAndLoad(variant: variant)
                 } catch {
-                    print("[Solo_STT] Failed to load model: \(error)")
+                    DiagnosticLogger.shared.error("Failed to load model: \(error)", category: "Model")
                 }
             }
         } else {
-            print("[Solo_STT] Provider: \(appState.currentProvider.displayName), skipping local model load")
+            DiagnosticLogger.shared.info("Provider: \(appState.currentProvider.displayName), skipping local model load", category: "App")
         }
     }
 
@@ -129,7 +129,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         window.center()
         window.styleMask = [.titled, .closable, .resizable]
         window.minSize = NSSize(width: 420, height: 500)
-        window.maxSize = NSSize(width: 420, height: 750)
+        window.maxSize = NSSize(width: 420, height: 800)
         window.isReleasedWhenClosed = false
         window.makeKeyAndOrderFront(nil)
 
@@ -165,7 +165,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleRecordingStart() {
         // Guard: must be ready to transcribe (local model loaded OR cloud with API key)
         guard appState.isReadyToTranscribe else {
-            print("[Solo_STT] Not ready to transcribe, ignoring hotkey")
+            DiagnosticLogger.shared.warning("Not ready to transcribe, ignoring hotkey", category: "Recording")
             return
         }
         // Allow restart from error state
@@ -181,7 +181,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Ensure audio engine is running before starting recording
         if let engineError = audioRecordingService?.ensureEngineRunning() {
             self.appState.recordingState = .error(engineError.localizedDescription)
-            print("[Solo_STT] Engine not ready: \(engineError.localizedDescription)")
+            DiagnosticLogger.shared.error("Engine not ready: \(engineError.localizedDescription)", category: "Audio")
             return
         }
 
@@ -194,10 +194,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             self.appState.recordingState = .recording
             // Play sound AFTER recording starts (brief Tink won't affect transcription)
             soundFeedbackService?.playStart()
-            print("[Solo_STT] Recording started")
+            DiagnosticLogger.shared.info("Recording started", category: "Recording")
         } catch {
             self.appState.recordingState = .error(error.localizedDescription)
-            print("[Solo_STT] Failed to start recording: \(error)")
+            DiagnosticLogger.shared.error("Failed to start recording: \(error)", category: "Recording")
         }
     }
 
@@ -218,7 +218,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func processRecordingResult(_ result: AudioRecordingService.AudioRecordingResult) {
         switch result {
         case .tooShort(let duration):
-            print("[Solo_STT] Recording too short (\(String(format: "%.0f", duration * 1000))ms), skipping")
+            DiagnosticLogger.shared.info("Recording too short (\(String(format: "%.0f", duration * 1000))ms), skipping", category: "Recording")
             appState.recordingState = .idle
             return
 
@@ -230,7 +230,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         case .success(let samples, let duration):
             // Play stop sound
             soundFeedbackService?.playStop()
-            print("[Solo_STT] Recording stopped (\(String(format: "%.1f", duration))s), transcribing...")
+            DiagnosticLogger.shared.info("Recording stopped (\(String(format: "%.1f", duration))s), transcribing...", category: "Recording")
 
             // Transcribe, process, and insert asynchronously
             appState.recordingState = .transcribing
@@ -250,11 +250,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                         await MainActor.run {
                             self.appState.recordingState = .idle
                         }
-                        print("[Solo_STT] Empty transcription after processing, skipping insertion")
+                        DiagnosticLogger.shared.info("Empty transcription after processing, skipping insertion", category: "Transcription")
                         return
                     }
 
-                    print("[Solo_STT] Transcription (\(result.language), \(String(format: "%.0f", result.latency * 1000))ms): \(processedText)")
+                    DiagnosticLogger.shared.info("Transcription (\(result.language), \(String(format: "%.0f", result.latency * 1000))ms): \(processedText)", category: "Transcription")
 
                     // Insert text at cursor
                     let isSecure = await MainActor.run { self.appState.isSecureInputActive }
@@ -273,7 +273,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     await MainActor.run {
                         self.appState.insertionState = .idle
                         self.appState.recordingState = .error(error.localizedDescription)
-                        print("[Solo_STT] Transcription failed: \(error)")
+                        DiagnosticLogger.shared.error("Transcription failed: \(error)", category: "Transcription")
                     }
                 }
             }
@@ -286,9 +286,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         appState.accessibilityGranted = PermissionService.checkAccessibility()
 
         if !appState.accessibilityGranted {
-            print("[Solo_STT] Accessibility permission not granted")
+            DiagnosticLogger.shared.warning("Accessibility permission not granted", category: "Permissions")
         } else {
-            print("[Solo_STT] Accessibility permission granted")
+            DiagnosticLogger.shared.info("Accessibility permission granted", category: "Permissions")
         }
 
         Task {
@@ -296,9 +296,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             await MainActor.run {
                 appState.microphoneGranted = micGranted
                 if micGranted {
-                    print("[Solo_STT] Microphone permission granted")
+                    DiagnosticLogger.shared.info("Microphone permission granted", category: "Permissions")
                 } else {
-                    print("[Solo_STT] Microphone permission not granted")
+                    DiagnosticLogger.shared.warning("Microphone permission not granted", category: "Permissions")
                 }
             }
         }

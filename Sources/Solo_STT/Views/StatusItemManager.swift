@@ -269,18 +269,18 @@ class StatusItemManager: NSObject {
         guard let modelId = sender.representedObject as? String else { return }
 
         guard case .idle = appState.recordingState else {
-            print("[Solo_STT] Cannot switch model during recording")
+            DiagnosticLogger.shared.warning("Cannot switch model during recording", category: "Model")
             return
         }
 
         appState.selectedModel = modelId
-        print("[Solo_STT] Selected model: \(modelId)")
+        DiagnosticLogger.shared.info("Selected model: \(modelId)", category: "Model")
 
         Task {
             do {
                 try await modelService.downloadAndLoad(variant: modelId)
             } catch {
-                print("[Solo_STT] Failed to load model: \(error)")
+                DiagnosticLogger.shared.error("Failed to load model: \(error)", category: "Model")
             }
         }
     }
@@ -290,12 +290,12 @@ class StatusItemManager: NSObject {
               let provider = TranscriptionProvider(rawValue: rawValue) else { return }
 
         guard case .idle = appState.recordingState else {
-            print("[Solo_STT] Cannot switch provider during recording")
+            DiagnosticLogger.shared.warning("Cannot switch provider during recording", category: "App")
             return
         }
 
         appState.transcriptionProvider = provider.rawValue
-        print("[Solo_STT] Selected provider: \(provider.displayName)")
+        DiagnosticLogger.shared.info("Selected provider: \(provider.displayName)", category: "App")
 
         // При переключении на local — загрузить модель
         if provider == .local {
@@ -303,7 +303,7 @@ class StatusItemManager: NSObject {
                 do {
                     try await modelService.downloadAndLoad(variant: appState.selectedModel)
                 } catch {
-                    print("[Solo_STT] Failed to load model: \(error)")
+                    DiagnosticLogger.shared.error("Failed to load model: \(error)", category: "Model")
                 }
             }
         }

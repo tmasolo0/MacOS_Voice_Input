@@ -277,6 +277,19 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            // MARK: - Диагностика
+            Section("Диагностика") {
+                Button("Собрать логи") {
+                    let summary = DiagnosticLogger.shared.diagnosticSummary(appState: appState)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(summary, forType: .string)
+                    NSWorkspace.shared.open(DiagnosticLogger.logsDirectory)
+                }
+                Button("Открыть папку логов") {
+                    NSWorkspace.shared.open(DiagnosticLogger.logsDirectory)
+                }
+            }
         }
         .formStyle(.grouped)
         .frame(width: 420, height: 620)
@@ -336,7 +349,7 @@ struct SettingsView: View {
             do {
                 try await modelService.downloadAndLoad(variant: modelId)
             } catch {
-                print("[Solo_STT] Failed to switch model: \(error)")
+                DiagnosticLogger.shared.error("Failed to switch model: \(error)", category: "Model")
             }
         }
     }

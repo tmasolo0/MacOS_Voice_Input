@@ -1,10 +1,6 @@
 import CoreGraphics
 import Carbon
 import AppKit
-import os.log
-
-private let logger = Logger(subsystem: "com.solo.stt", category: "HotkeyService")
-
 class HotkeyService {
     var onKeyDown: (() -> Void)?
     var onKeyUp: (() -> Void)?
@@ -68,14 +64,14 @@ class HotkeyService {
         )
 
         guard let eventTap else {
-            logger.error("Failed to create event tap - check Accessibility permission")
+            DiagnosticLogger.shared.error("Failed to create event tap - check Accessibility permission", category: "Hotkey")
             return
         }
 
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: eventTap, enable: true)
-        logger.info("Event tap created successfully")
+        DiagnosticLogger.shared.info("Event tap created successfully", category: "Hotkey")
     }
 
     private func handleEvent(

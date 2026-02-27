@@ -35,7 +35,7 @@ struct TextInsertionService {
 
         // Show macOS notification — use NSSound alert as simple feedback
         NSSound.beep()
-        print("[Solo_STT] Secure input active — text copied to clipboard")
+        DiagnosticLogger.shared.info("Secure input active — text copied to clipboard", category: "Insertion")
     }
 
     // MARK: - Normal Insertion Path
@@ -88,9 +88,9 @@ struct TextInsertionService {
                 }
                 pasteboard.writeObjects([item])
             }
-            print("[Solo_STT] Clipboard restored")
+            DiagnosticLogger.shared.info("Clipboard restored", category: "Insertion")
         } else {
-            print("[Solo_STT] Clipboard changed externally (expected \(expectedChangeCount), got \(pasteboard.changeCount)), skipping restore")
+            DiagnosticLogger.shared.warning("Clipboard changed externally (expected \(expectedChangeCount), got \(pasteboard.changeCount)), skipping restore", category: "Insertion")
         }
     }
 

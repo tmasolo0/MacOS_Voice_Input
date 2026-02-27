@@ -42,7 +42,7 @@ class ModelService: NSObject {
         do {
             let localURL = try await downloadFile(from: model.downloadURL, to: model.localURL)
             UserDefaults.standard.set(variant, forKey: Self.modelVariantKey)
-            print("[Solo_STT] Model downloaded to: \(localURL.path)")
+            DiagnosticLogger.shared.info("Model downloaded to: \(localURL.path)", category: "Model")
         } catch {
             await MainActor.run {
                 appState.modelState = .error(error.localizedDescription)
@@ -65,12 +65,12 @@ class ModelService: NSObject {
         }
 
         let startTime = Date()
-        print("[Solo_STT] Loading model from: \(model.localURL.path)")
+        DiagnosticLogger.shared.info("Loading model from: \(model.localURL.path)", category: "Model")
 
         whisper = Whisper(fromFileURL: model.localURL)
 
         let elapsed = Date().timeIntervalSince(startTime)
-        print("[Solo_STT] Model loaded in \(String(format: "%.1f", elapsed))s")
+        DiagnosticLogger.shared.info("Model loaded in \(String(format: "%.1f", elapsed))s", category: "Model")
 
         await MainActor.run {
             appState.modelState = .ready
@@ -79,7 +79,7 @@ class ModelService: NSObject {
 
     func downloadAndLoad(variant: String) async throws {
         if hasCachedModel(variant: variant) {
-            print("[Solo_STT] Model cached, skipping download")
+            DiagnosticLogger.shared.info("Model cached, skipping download", category: "Model")
         } else {
             try await downloadModel(variant: variant)
         }
@@ -97,11 +97,11 @@ class ModelService: NSObject {
     func downloadCoreMLEncoderIfNeeded(model: WhisperModel) async {
         let encoderDir = model.coreMLEncoderLocalDir
         if FileManager.default.fileExists(atPath: encoderDir.path) {
-            print("[Solo_STT] CoreML encoder already exists: \(encoderDir.lastPathComponent)")
+            DiagnosticLogger.shared.info("CoreML encoder already exists: \(encoderDir.lastPathComponent)", category: "Model")
             return
         }
 
-        print("[Solo_STT] Downloading CoreML encoder: \(model.coreMLEncoderZipURL.lastPathComponent)")
+        DiagnosticLogger.shared.info("Downloading CoreML encoder: \(model.coreMLEncoderZipURL.lastPathComponent)", category: "Model")
         await MainActor.run {
             appState.modelState = .downloading(progress: 0)
         }
@@ -111,7 +111,7 @@ class ModelService: NSObject {
 
         do {
             let downloadedURL = try await downloadFile(from: model.coreMLEncoderZipURL, to: zipURL)
-            print("[Solo_STT] CoreML encoder downloaded, unzipping...")
+            DiagnosticLogger.shared.info("CoreML encoder downloaded, unzipping...", category: "Model")
 
             // Unzip using Process (unzip command)
             try unzipFile(at: downloadedURL, to: model.localURL.deletingLastPathComponent())
@@ -120,12 +120,12 @@ class ModelService: NSObject {
             try? FileManager.default.removeItem(at: downloadedURL)
 
             if FileManager.default.fileExists(atPath: encoderDir.path) {
-                print("[Solo_STT] CoreML encoder ready: \(encoderDir.lastPathComponent)")
+                DiagnosticLogger.shared.info("CoreML encoder ready: \(encoderDir.lastPathComponent)", category: "Model")
             } else {
-                print("[Solo_STT] Warning: CoreML encoder dir not found after unzip")
+                DiagnosticLogger.shared.warning("CoreML encoder dir not found after unzip", category: "Model")
             }
         } catch {
-            print("[Solo_STT] CoreML encoder download failed: \(error.localizedDescription)")
+            DiagnosticLogger.shared.error("CoreML encoder download failed: \(error.localizedDescription)", category: "Model")
         }
 
         await MainActor.run {
