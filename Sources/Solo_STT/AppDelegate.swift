@@ -10,6 +10,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var aboutWindow: NSWindow?
     private var hotkeyService: HotkeyService?
     private var soundFeedbackService: SoundFeedbackService?
+    private var floatingPillManager: FloatingPillManager?
     private var audioRecordingService: AudioRecordingService?
     private var transcriptionService: TranscriptionService?
     private var textProcessingService: TextProcessingService?
@@ -43,6 +44,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         transcriptionService = TranscriptionService(modelService: modelService!, appState: appState)
         textProcessingService = TextProcessingService()
         textInsertionService = TextInsertionService()
+
+        floatingPillManager = FloatingPillManager(appState: appState)
+        floatingPillManager?.start()
 
         // Wire hotkey callbacks
         hotkeyService = HotkeyService()
