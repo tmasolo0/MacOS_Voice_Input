@@ -98,8 +98,8 @@ struct SettingsView: View {
                         get: { appState.selectedModel },
                         set: { switchModel($0) }
                     )) {
-                        ForEach(WhisperModel.all) { model in
-                            Text("\(model.displayName) (\(model.size))")
+                        ForEach(WhisperModel.all, id: \.id) { model in
+                            Text("\(model.displayName) (\(model.approximateSizeMB) MB)")
                                 .tag(model.id)
                         }
                     }

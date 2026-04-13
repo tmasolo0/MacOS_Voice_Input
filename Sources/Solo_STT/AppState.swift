@@ -6,7 +6,7 @@ class AppState {
     var accessibilityGranted: Bool = false
     var microphoneGranted: Bool = false
     var modelState: ModelState = .notLoaded
-    var selectedModel: String = UserDefaults.standard.string(forKey: "selectedModel") ?? "ggml-medium.bin" {
+    var selectedModel: String = UserDefaults.standard.string(forKey: "selectedModel") ?? WhisperModel.default.rawValue {
         didSet { UserDefaults.standard.set(selectedModel, forKey: "selectedModel") }
     }
     var transcriptionLanguage: String = UserDefaults.standard.string(forKey: "transcriptionLanguage") ?? "ru" {

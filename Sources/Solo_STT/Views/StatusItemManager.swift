@@ -96,19 +96,25 @@ class StatusItemManager: NSObject {
     private func rebuildModelSubmenu(_ submenu: NSMenu) {
         submenu.removeAllItems()
 
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let modelsDir = appSupport
+            .appendingPathComponent("Solo_STT")
+            .appendingPathComponent("models")
+            .appendingPathComponent("whisperkit")
         let downloadedModels = WhisperModel.all.filter {
-            FileManager.default.fileExists(atPath: $0.localURL.path)
+            let encoder = modelsDir.appendingPathComponent($0.rawValue).appendingPathComponent("AudioEncoder.mlmodelc")
+            return FileManager.default.fileExists(atPath: encoder.path)
         }
 
         for model in downloadedModels {
             let item = NSMenuItem(
-                title: "\(model.displayName) (\(model.size))",
+                title: "\(model.displayName) (\(model.approximateSizeMB) MB)",
                 action: #selector(selectModel(_:)),
                 keyEquivalent: ""
             )
             item.representedObject = model.id
             item.target = self
-            item.state = (model.id == appState.selectedModel) ? .on : .off
+            item.state = (model.id == appState.selectedModel) ? NSControl.StateValue.on : NSControl.StateValue.off
             submenu.addItem(item)
         }
 

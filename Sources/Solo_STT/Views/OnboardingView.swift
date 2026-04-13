@@ -4,7 +4,7 @@ struct OnboardingView: View {
     @Bindable var appState: AppState
     let modelService: ModelService
     @State private var currentStep: Int = 1
-    @State private var selectedModel: WhisperModel = WhisperModel.defaultModel
+    @State private var selectedModel: WhisperModel = WhisperModel.default
     @State private var downloadError: String?
     @State private var isDownloading: Bool = false
     @State private var testResult: String?
@@ -192,7 +192,7 @@ struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(model.displayName)
                         .font(.headline)
-                    Text(model.size)
+                    Text("\(model.approximateSizeMB) MB")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
