@@ -1,225 +1,102 @@
 import Foundation
-import SwiftWhisper
+import Observation
+import WhisperKit
 
-class ModelService: NSObject {
-    private(set) var whisper: Whisper?
+@Observable
+@MainActor
+final class ModelService {
+    enum ModelError: LocalizedError {
+        case unknownVariant(String)
+        var errorDescription: String? {
+            switch self {
+            case .unknownVariant(let v): return "Unknown model variant: \(v)"
+            }
+        }
+    }
+
     private let appState: AppState
+    private let transcriber = WhisperKitTranscriber()
 
-    private static let modelVariantKey = "downloadedModelVariant"
-
-    private var downloadTask: URLSessionDownloadTask?
-    private var downloadContinuation: CheckedContinuation<URL, any Error>?
-    private var pendingDownloadLocalURL: URL?
+    var modelsDirectory: URL {
+        let appSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory, in: .userDomainMask
+        ).first!
+        return appSupport
+            .appendingPathComponent("Solo_STT")
+            .appendingPathComponent("models")
+            .appendingPathComponent("whisperkit")
+    }
 
     init(appState: AppState) {
         self.appState = appState
-        super.init()
-    }
-
-    /// Check if model file exists on disk
-    func hasCachedModel(variant: String) -> Bool {
-        guard let model = WhisperModel.all.first(where: { $0.id == variant }) else {
-            return false
-        }
-        return FileManager.default.fileExists(atPath: model.localURL.path)
-    }
-
-    func downloadModel(variant: String) async throws {
-        guard let model = WhisperModel.all.first(where: { $0.id == variant }) else {
-            throw ModelServiceError.unknownModel(variant)
-        }
-
-        // Ensure models directory exists
-        try FileManager.default.createDirectory(
-            at: WhisperModel.modelsDirectory,
+        try? FileManager.default.createDirectory(
+            at: modelsDirectory,
             withIntermediateDirectories: true
         )
-
-        await MainActor.run {
-            appState.modelState = .downloading(progress: 0)
-        }
-
-        do {
-            let localURL = try await downloadFile(from: model.downloadURL, to: model.localURL)
-            UserDefaults.standard.set(variant, forKey: Self.modelVariantKey)
-            DiagnosticLogger.shared.info("Model downloaded to: \(localURL.path)", category: "Model")
-        } catch {
-            await MainActor.run {
-                appState.modelState = .error(error.localizedDescription)
-            }
-            throw error
-        }
     }
 
-    func loadModel(variant: String) async throws {
-        guard let model = WhisperModel.all.first(where: { $0.id == variant }) else {
-            throw ModelServiceError.unknownModel(variant)
-        }
+    func transcriberActor() -> WhisperKitTranscriber { transcriber }
 
-        guard FileManager.default.fileExists(atPath: model.localURL.path) else {
-            throw ModelServiceError.modelFileNotFound
-        }
-
-        await MainActor.run {
-            appState.modelState = .loading
-        }
-
-        let startTime = Date()
-        DiagnosticLogger.shared.info("Loading model from: \(model.localURL.path)", category: "Model")
-
-        whisper = Whisper(fromFileURL: model.localURL)
-
-        let elapsed = Date().timeIntervalSince(startTime)
-        DiagnosticLogger.shared.info("Model loaded in \(String(format: "%.1f", elapsed))s", category: "Model")
-
-        await MainActor.run {
-            appState.modelState = .ready
-        }
+    func isModelDownloaded(_ model: WhisperModel) -> Bool {
+        let folder = modelsDirectory.appendingPathComponent(model.rawValue)
+        let encoder = folder.appendingPathComponent("AudioEncoder.mlmodelc")
+        return FileManager.default.fileExists(atPath: encoder.path)
     }
 
     func downloadAndLoad(variant: String) async throws {
-        if hasCachedModel(variant: variant) {
-            DiagnosticLogger.shared.info("Model cached, skipping download", category: "Model")
-        } else {
-            try await downloadModel(variant: variant)
-        }
-        try await loadModel(variant: variant)
-
-        // Download CoreML encoder in background (non-blocking)
-        if let model = WhisperModel.all.first(where: { $0.id == variant }) {
-            Task {
-                await downloadCoreMLEncoderIfNeeded(model: model)
-            }
-        }
-    }
-
-    /// Download and unzip CoreML encoder if not already present
-    func downloadCoreMLEncoderIfNeeded(model: WhisperModel) async {
-        let encoderDir = model.coreMLEncoderLocalDir
-        if FileManager.default.fileExists(atPath: encoderDir.path) {
-            DiagnosticLogger.shared.info("CoreML encoder already exists: \(encoderDir.lastPathComponent)", category: "Model")
-            return
+        guard let model = WhisperModel(rawValue: variant) else {
+            throw ModelError.unknownVariant(variant)
         }
 
-        DiagnosticLogger.shared.info("Downloading CoreML encoder: \(model.coreMLEncoderZipURL.lastPathComponent)", category: "Model")
-        await MainActor.run {
+        if !isModelDownloaded(model) {
             appState.modelState = .downloading(progress: 0)
+            DiagnosticLogger.shared.info(
+                "Downloading \(variant) → \(modelsDirectory.path)",
+                category: "Model"
+            )
+
+            _ = try await WhisperKit.download(
+                variant: variant,
+                downloadBase: modelsDirectory,
+                useBackgroundSession: false,
+                from: "argmaxinc/whisperkit-coreml",
+                progressCallback: { progress in
+                    Task { @MainActor in
+                        self.appState.modelState = .downloading(
+                            progress: progress.fractionCompleted
+                        )
+                    }
+                }
+            )
         }
 
-        let zipURL = model.localURL.deletingLastPathComponent()
-            .appendingPathComponent(model.coreMLEncoderName + ".zip")
+        appState.modelState = .loading
+        let modelFolder = modelsDirectory.appendingPathComponent(variant)
+        try await transcriber.load(
+            modelFolder: modelFolder,
+            variant: variant,
+            prewarm: true
+        )
+        appState.modelState = .ready
+        DiagnosticLogger.shared.info(
+            "Model \(variant) loaded and ready",
+            category: "Model"
+        )
+    }
 
-        do {
-            let downloadedURL = try await downloadFile(from: model.coreMLEncoderZipURL, to: zipURL)
-            DiagnosticLogger.shared.info("CoreML encoder downloaded, unzipping...", category: "Model")
-
-            // Unzip using Process (unzip command)
-            try unzipFile(at: downloadedURL, to: model.localURL.deletingLastPathComponent())
-
-            // Remove zip after extraction
-            try? FileManager.default.removeItem(at: downloadedURL)
-
-            if FileManager.default.fileExists(atPath: encoderDir.path) {
-                DiagnosticLogger.shared.info("CoreML encoder ready: \(encoderDir.lastPathComponent)", category: "Model")
-            } else {
-                DiagnosticLogger.shared.warning("CoreML encoder dir not found after unzip", category: "Model")
-            }
-        } catch {
-            DiagnosticLogger.shared.error("CoreML encoder download failed: \(error.localizedDescription)", category: "Model")
-        }
-
-        await MainActor.run {
-            appState.modelState = .ready
+    func deleteModel(_ model: WhisperModel) throws {
+        let folder = modelsDirectory.appendingPathComponent(model.rawValue)
+        if FileManager.default.fileExists(atPath: folder.path) {
+            try FileManager.default.removeItem(at: folder)
         }
     }
 
-    private func unzipFile(at zipURL: URL, to destDir: URL) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        process.arguments = ["-o", zipURL.path, "-d", destDir.path]
-        process.standardOutput = nil
-        process.standardError = nil
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw ModelServiceError.downloadFailed("unzip failed with status \(process.terminationStatus)")
-        }
-    }
-
-    // MARK: - Download with progress
-
-    private func downloadFile(from remoteURL: URL, to localURL: URL) async throws -> URL {
-        return try await withCheckedThrowingContinuation { continuation in
-            self.downloadContinuation = continuation
-            self.pendingDownloadLocalURL = localURL
-
-            let config = URLSessionConfiguration.default
-            let session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
-            let task = session.downloadTask(with: remoteURL)
-            self.downloadTask = task
-            task.resume()
-        }
-    }
-
-    // MARK: - Errors
-
-    enum ModelServiceError: LocalizedError {
-        case modelNotLoaded
-        case modelFileNotFound
-        case unknownModel(String)
-        case downloadFailed(String)
-
-        var errorDescription: String? {
-            switch self {
-            case .modelNotLoaded:
-                return "Модель не загружена"
-            case .modelFileNotFound:
-                return "Файл модели не найден. Сначала скачайте модель."
-            case .unknownModel(let id):
-                return "Неизвестная модель: \(id)"
-            case .downloadFailed(let reason):
-                return "Ошибка скачивания: \(reason)"
-            }
-        }
-    }
-}
-
-// MARK: - URLSessionDownloadDelegate
-
-extension ModelService: URLSessionDownloadDelegate {
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        guard let localURL = pendingDownloadLocalURL else {
-            downloadContinuation?.resume(throwing: ModelServiceError.downloadFailed("Не удалось определить путь сохранения"))
-            downloadContinuation = nil
-            return
-        }
-
-        do {
-            if FileManager.default.fileExists(atPath: localURL.path) {
-                try FileManager.default.removeItem(at: localURL)
-            }
-            try FileManager.default.moveItem(at: location, to: localURL)
-            downloadContinuation?.resume(returning: localURL)
-        } catch {
-            downloadContinuation?.resume(throwing: error)
-        }
-        downloadContinuation = nil
-        pendingDownloadLocalURL = nil
-    }
-
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        guard totalBytesExpectedToWrite > 0 else { return }
-        let progress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
-        Task { @MainActor in
-            self.appState.modelState = .downloading(progress: progress)
-        }
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
-        if let error {
-            downloadContinuation?.resume(throwing: error)
-            downloadContinuation = nil
-            pendingDownloadLocalURL = nil
+    func deleteLegacyGgmlModels() {
+        let legacyDir = modelsDirectory.deletingLastPathComponent()
+        let legacyFiles = ["ggml-small.bin", "ggml-medium.bin", "ggml-large.bin"]
+        for file in legacyFiles {
+            let path = legacyDir.appendingPathComponent(file)
+            try? FileManager.default.removeItem(at: path)
         }
     }
 }
