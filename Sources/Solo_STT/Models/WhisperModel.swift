@@ -1,58 +1,43 @@
 import Foundation
 
-struct WhisperModel: Identifiable, Hashable {
-    let id: String
-    let displayName: String
-    let size: String
-    let isRecommended: Bool
+enum WhisperModel: String, CaseIterable, Identifiable, Sendable {
+    case turboQuantized = "openai_whisper-large-v3-turbo_turbo_600MB"
+    case turbo          = "openai_whisper-large-v3-turbo"
+    case largeV3        = "openai_whisper-large-v3"
+    case small          = "openai_whisper-small"
 
-    /// Base URL for downloading GGML models from HuggingFace
-    static let baseDownloadURL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
+    var id: String { rawValue }
 
-    /// Local directory for storing downloaded models
-    static var modelsDirectory: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport.appendingPathComponent("Solo_STT/models", isDirectory: true)
+    var displayName: String {
+        switch self {
+        case .turboQuantized: return "Large v3 Turbo (600 MB, квантизованная)"
+        case .turbo:          return "Large v3 Turbo (1.5 GB, рекомендуется)"
+        case .largeV3:        return "Large v3 (3 GB, максимум качества)"
+        case .small:          return "Small (250 MB, быстро и слабо)"
+        }
     }
 
-    var downloadURL: URL {
-        URL(string: Self.baseDownloadURL + id)!
+    var approximateSizeMB: Int {
+        switch self {
+        case .turboQuantized: return 600
+        case .turbo:          return 1500
+        case .largeV3:        return 3000
+        case .small:          return 250
+        }
     }
 
-    var localURL: URL {
-        Self.modelsDirectory.appendingPathComponent(id)
-    }
+    static var `default`: WhisperModel { .turbo }
+    static var all: [WhisperModel] { Self.allCases }
 
-    /// CoreML encoder filename: ggml-medium.bin → ggml-medium-encoder.mlmodelc
-    var coreMLEncoderName: String {
-        let base = (id as NSString).deletingPathExtension  // "ggml-medium"
-        return "\(base)-encoder.mlmodelc"
-    }
-
-    var coreMLEncoderZipURL: URL {
-        URL(string: Self.baseDownloadURL + coreMLEncoderName + ".zip")!
-    }
-
-    var coreMLEncoderLocalDir: URL {
-        Self.modelsDirectory.appendingPathComponent(coreMLEncoderName, isDirectory: true)
-    }
-
-    static let all: [WhisperModel] = [
-        WhisperModel(
-            id: "ggml-small.bin",
-            displayName: "Small",
-            size: "~460 MB",
-            isRecommended: false
-        ),
-        WhisperModel(
-            id: "ggml-medium.bin",
-            displayName: "Medium (рекомендуется)",
-            size: "~1.5 GB",
-            isRecommended: true
-        ),
-    ]
-
-    static var defaultModel: WhisperModel {
-        all.first(where: { $0.isRecommended }) ?? all[0]
+    /// Маппинг устаревших GGML-имён на новые WhisperKit-варианты.
+    /// Используется при миграции UserDefaults с v1 на v2.
+    static func migrateFromLegacy(_ legacy: String) -> WhisperModel {
+        switch legacy {
+        case "ggml-small.bin":  return .small
+        case "ggml-medium.bin": return .turbo
+        case "ggml-large.bin":  return .largeV3
+        default:
+            return WhisperModel(rawValue: legacy) ?? .default
+        }
     }
 }
