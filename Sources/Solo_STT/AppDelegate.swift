@@ -15,6 +15,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var transcriptionService: TranscriptionService?
     private var textCleanupService: TextCleanupService?
     private var vadService: VADService?
+    private var audioLevelMonitor: AudioLevelMonitor?
     private var textInsertionService: TextInsertionService?
     private var targetApp: NSRunningApplication?
 
@@ -47,7 +48,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         vadService = VADService()
         textInsertionService = TextInsertionService()
 
-        floatingPillManager = FloatingPillManager(appState: appState)
+        audioLevelMonitor = AudioLevelMonitor()
+        audioRecordingService?.levelMonitor = audioLevelMonitor
+
+        floatingPillManager = FloatingPillManager(
+            appState: appState,
+            levelMonitor: audioLevelMonitor!
+        )
         floatingPillManager?.start()
 
         // Wire hotkey callbacks
@@ -217,6 +224,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + AudioRecordingService.stopDelay) { [weak self] in
             guard let self else { return }
             let result = audioRecordingService.stopRecording()
+            self.audioLevelMonitor?.reset()
             self.processRecordingResult(result)
         }
     }

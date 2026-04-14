@@ -32,6 +32,7 @@ extension Notification.Name {
 class FloatingPillManager {
     private var panel: NSPanel?
     private var appState: AppState
+    private let levelMonitor: AudioLevelMonitor
     private var observationTimer: Timer?
     private var isVisible = false
     private var lastState: String = "idle"
@@ -40,7 +41,8 @@ class FloatingPillManager {
     private static let offsetDXKey = "pillOffsetDX"
     private static let offsetDYKey = "pillOffsetDY"
 
-    init(appState: AppState) {
+    init(appState: AppState, levelMonitor: AudioLevelMonitor) {
+        self.levelMonitor = levelMonitor
         self.appState = appState
     }
 
@@ -104,7 +106,7 @@ class FloatingPillManager {
     }
 
     private func setContent(on panel: NSPanel) {
-        let view = FloatingPillView(recordingState: appState.recordingState)
+        let view = FloatingPillView(appState: appState, levelMonitor: levelMonitor)
         let hostingView = DraggableHostingView(rootView: view)
         hostingView.frame.size = hostingView.fittingSize
         panel.setContentSize(hostingView.fittingSize)

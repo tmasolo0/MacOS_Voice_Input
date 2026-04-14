@@ -22,6 +22,9 @@ class AudioRecordingService {
     /// Нормализовать громкость перед транскрипцией
     var normalizeAudio: Bool = true
 
+    /// UI-level monitor для отображения RMS в FloatingPill
+    var levelMonitor: AudioLevelMonitor?
+
     /// Minimum recording duration to avoid empty transcriptions
     static let minimumDuration: TimeInterval = 0.3  // 300ms
 
@@ -86,6 +89,10 @@ class AudioRecordingService {
 
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { [weak self] buffer, _ in
             guard let self else { return }
+
+            Task { @MainActor [weak self] in
+                self?.levelMonitor?.update(from: buffer)
+            }
 
             let samples: [Float]
 
