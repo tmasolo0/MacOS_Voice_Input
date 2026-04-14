@@ -24,6 +24,7 @@ mkdir -p "$APP_DIR/Contents/Resources"
 cp "$BUILD_DIR/$EXECUTABLE" "$APP_DIR/Contents/MacOS/$EXECUTABLE"
 chmod +x "$APP_DIR/Contents/MacOS/$EXECUTABLE"
 cp "Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
+cp -R "Resources/silero_vad.mlmodelc" "$APP_DIR/Contents/Resources/silero_vad.mlmodelc"
 
 cat > "$APP_DIR/Contents/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
