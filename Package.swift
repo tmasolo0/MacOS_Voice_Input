@@ -17,6 +17,9 @@ let package = Package(
                 .product(name: "WhisperKit", package: "WhisperKit"),
             ],
             path: "Sources/Solo_STT",
+            resources: [
+                .copy("../../Resources/silero_vad.mlmodelc")
+            ],
             swiftSettings: [
                 .swiftLanguageMode(.v5)
             ]
