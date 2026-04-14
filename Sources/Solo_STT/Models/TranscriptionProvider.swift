@@ -1,7 +1,8 @@
 import Foundation
 
-enum TranscriptionProvider: String, CaseIterable, Identifiable {
+enum TranscriptionProvider: String, CaseIterable, Identifiable, Sendable {
     case local
+    case appleSpeech = "apple_speech"
     case customServer
     case cloud
 
@@ -9,26 +10,32 @@ enum TranscriptionProvider: String, CaseIterable, Identifiable {
 
     var displayName: String {
         switch self {
-        case .local: return "Локальная"
+        case .local:        return "Локальный — WhisperKit (рекомендуется)"
+        case .appleSpeech:  return "Локальный — Apple Speech (macOS 26)"
+        case .cloud:        return "Облачный — OpenAI / Groq"
         case .customServer: return "Свой сервер"
-        case .cloud: return "Облако"
         }
     }
 
-    /// Короткая метка для отображения рядом с иконкой в трее
     var shortLabel: String {
         switch self {
-        case .local: return ""
+        case .local:        return ""
+        case .appleSpeech:  return "AS"
         case .customServer: return "S"
-        case .cloud: return "C"
+        case .cloud:        return "C"
         }
     }
 
     var isCloud: Bool {
-        self != .local
+        switch self {
+        case .local, .appleSpeech:  return false
+        case .cloud, .customServer: return true
+        }
     }
 
     var keychainKey: String {
         "apiKey-\(rawValue)"
     }
+
+    static var `default`: TranscriptionProvider { .local }
 }

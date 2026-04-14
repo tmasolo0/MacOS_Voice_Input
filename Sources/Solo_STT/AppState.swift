@@ -107,6 +107,8 @@ class AppState {
         case .local:
             if case .ready = modelState { return true }
             return false
+        case .appleSpeech:
+            return true
         case .customServer:
             return !customEndpointURL.isEmpty
         case .cloud:

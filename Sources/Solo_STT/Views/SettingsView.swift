@@ -337,7 +337,7 @@ struct SettingsView: View {
             apiKey = KeychainService.load(key: appState.cloudKeychainKey) ?? ""
         case .customServer:
             apiKey = KeychainService.load(key: appState.currentProvider.keychainKey) ?? ""
-        case .local:
+        case .local, .appleSpeech:
             apiKey = ""
         }
     }

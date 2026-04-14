@@ -23,6 +23,7 @@ final class TranscriptionService {
     private let modelService: ModelService
     private let appState: AppState
     private let cloudClient = CloudTranscriptionClient()
+    private let appleSpeech = AppleSpeechTranscriber()
 
     init(modelService: ModelService, appState: AppState) {
         self.modelService = modelService
@@ -41,6 +42,10 @@ final class TranscriptionService {
                 language: language,
                 vocabulary: vocabulary
             )
+            return TranscriptionResultData(text: r.text, language: r.language, latency: r.latency)
+
+        case .appleSpeech:
+            let r = try await appleSpeech.transcribe(samples: audioSamples, language: language)
             return TranscriptionResultData(text: r.text, language: r.language, latency: r.latency)
 
         case .cloud:
