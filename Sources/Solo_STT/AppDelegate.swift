@@ -20,6 +20,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var targetApp: NSRunningApplication?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        appState.performMigrationIfNeeded()
+
         // Защита от двойного запуска
         let dominated = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
         if dominated.count > 1 {

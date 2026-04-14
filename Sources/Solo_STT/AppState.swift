@@ -43,6 +43,53 @@ class AppState {
     WhisperKit, Foundation Models, ANE, CoreML
     """
 
+    static func migrateProvider(from legacy: String) -> (provider: String, cloudService: String?) {
+        switch legacy {
+        case "openai": return ("cloud", "openai")
+        case "groq":   return ("cloud", "groq")
+        case "logosStt", "customLocal", "custom": return ("customServer", nil)
+        default: return (legacy, nil)
+        }
+    }
+
+    static let currentMigrationVersion = 2
+    private static let migrationVersionKey = "appMigrationVersion"
+
+    func performMigrationIfNeeded() {
+        let stored = UserDefaults.standard.integer(forKey: Self.migrationVersionKey)
+        guard stored < Self.currentMigrationVersion else { return }
+
+        DiagnosticLogger.shared.info(
+            "Running migration from v\(stored) to v\(Self.currentMigrationVersion)",
+            category: "Migration"
+        )
+
+        let oldProvider = UserDefaults.standard.string(forKey: "transcriptionProvider") ?? "local"
+        let (newProvider, newCloudService) = Self.migrateProvider(from: oldProvider)
+        UserDefaults.standard.set(newProvider, forKey: "transcriptionProvider")
+        if let cloudService = newCloudService {
+            UserDefaults.standard.set(cloudService, forKey: "cloudService")
+        }
+
+        let oldModel = UserDefaults.standard.string(forKey: "selectedModel") ?? ""
+        let newModel = WhisperModel.migrateFromLegacy(oldModel)
+        UserDefaults.standard.set(newModel.rawValue, forKey: "selectedModel")
+
+        if let presets = UserDefaults.standard.array(forKey: "selectedPresets") as? [String],
+           !presets.isEmpty {
+            let current = UserDefaults.standard.string(forKey: "customVocabulary") ?? ""
+            let merged = Self.mergeVocabulary(current: current, presetWords: presets)
+            UserDefaults.standard.set(merged, forKey: "customVocabulary")
+            UserDefaults.standard.removeObject(forKey: "selectedPresets")
+        }
+
+        UserDefaults.standard.set(Self.currentMigrationVersion, forKey: Self.migrationVersionKey)
+        DiagnosticLogger.shared.info(
+            "Migration to v\(Self.currentMigrationVersion) complete",
+            category: "Migration"
+        )
+    }
+
     static func mergeVocabulary(current: String, presetWords: [String]) -> String {
         let currentWords = current
             .split(separator: ",")
