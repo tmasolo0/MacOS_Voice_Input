@@ -8,6 +8,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var onboardingWindow: NSWindow?
     private var settingsWindow: NSWindow?
     private var aboutWindow: NSWindow?
+    private var migrationWindow: NSWindow?
     private var hotkeyService: HotkeyService?
     private var soundFeedbackService: SoundFeedbackService?
     private var floatingPillManager: FloatingPillManager?
@@ -21,6 +22,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         appState.performMigrationIfNeeded()
+
+        let showMigration = !UserDefaults.standard.bool(forKey: "v2MigrationUISeen")
 
         // Защита от двойного запуска
         let dominated = NSRunningApplication.runningApplications(withBundleIdentifier: Bundle.main.bundleIdentifier ?? "")
@@ -81,6 +84,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         if !appState.hasCompletedOnboarding {
             showOnboardingWindow()
+        } else if showMigration && modelService?.isModelDownloaded(.turbo) == false {
+            showMigrationWindow()
+            UserDefaults.standard.set(true, forKey: "v2MigrationUISeen")
         } else if appState.currentProvider == .local {
             // Local mode — load model in background
             let variant = appState.selectedModel
@@ -95,6 +101,27 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             DiagnosticLogger.shared.info("Provider: \(appState.currentProvider.displayName), skipping local model load", category: "App")
         }
+    }
+
+    private func showMigrationWindow() {
+        guard let modelService else { return }
+        let view = MigrationOnboardingView(
+            appState: appState,
+            modelService: modelService,
+            onDismiss: { [weak self] in
+                self?.migrationWindow?.close()
+                self?.migrationWindow = nil
+            }
+        )
+        let hostingController = NSHostingController(rootView: view)
+        let window = NSWindow(contentViewController: hostingController)
+        window.title = "Solo STT — Обновление"
+        window.styleMask = [.titled, .closable]
+        window.center()
+        window.isReleasedWhenClosed = false
+        window.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        migrationWindow = window
     }
 
     private func showOnboardingWindow() {
