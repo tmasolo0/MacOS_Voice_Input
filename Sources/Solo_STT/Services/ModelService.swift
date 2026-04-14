@@ -37,9 +37,17 @@ final class ModelService {
 
     func transcriberActor() -> WhisperKitTranscriber { transcriber }
 
+    /// Локальный путь к модели после snapshot download.
+    /// HubApi кладёт снэпшот в `downloadBase/<repoId>/<folderName>/`.
+    private func localModelFolder(_ model: WhisperModel) -> URL {
+        modelsDirectory
+            .appendingPathComponent("argmaxinc")
+            .appendingPathComponent("whisperkit-coreml")
+            .appendingPathComponent(model.folderName)
+    }
+
     func isModelDownloaded(_ model: WhisperModel) -> Bool {
-        let folder = modelsDirectory.appendingPathComponent(model.rawValue)
-        let encoder = folder.appendingPathComponent("AudioEncoder.mlmodelc")
+        let encoder = localModelFolder(model).appendingPathComponent("AudioEncoder.mlmodelc")
         return FileManager.default.fileExists(atPath: encoder.path)
     }
 
@@ -48,14 +56,17 @@ final class ModelService {
             throw ModelError.unknownVariant(variant)
         }
 
-        if !isModelDownloaded(model) {
+        let modelFolder: URL
+        if isModelDownloaded(model) {
+            modelFolder = localModelFolder(model)
+        } else {
             appState.modelState = .downloading(progress: 0)
             DiagnosticLogger.shared.info(
                 "Downloading \(variant) → \(modelsDirectory.path)",
                 category: "Model"
             )
 
-            _ = try await WhisperKit.download(
+            modelFolder = try await WhisperKit.download(
                 variant: variant,
                 downloadBase: modelsDirectory,
                 useBackgroundSession: false,
@@ -71,7 +82,6 @@ final class ModelService {
         }
 
         appState.modelState = .loading
-        let modelFolder = modelsDirectory.appendingPathComponent(variant)
         try await transcriber.load(
             modelFolder: modelFolder,
             variant: variant,
@@ -79,7 +89,7 @@ final class ModelService {
         )
         appState.modelState = .ready
         DiagnosticLogger.shared.info(
-            "Model \(variant) loaded and ready",
+            "Model \(variant) loaded from \(modelFolder.path)",
             category: "Model"
         )
     }
