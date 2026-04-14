@@ -144,7 +144,22 @@ struct SettingsView: View {
                     Text("Свои термины через запятую — помогает Whisper распознавать их правильно")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Button("Сбросить на умолчания") {
+                        appState.customVocabulary = AppState.defaultVocabulary
+                    }
                 }
+            }
+
+            // MARK: - AI-очистка
+            Section("AI-очистка текста") {
+                Toggle("Включить Foundation Models cleanup", isOn: Binding(
+                    get: { appState.aiCleanupEnabled },
+                    set: { appState.aiCleanupEnabled = $0 }
+                ))
+                Text("Убирает заполнители, исправляет пунктуацию, капитализирует термины. Локально, через Apple Intelligence (требуется macOS 26+).")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             // MARK: - Горячая клавиша
