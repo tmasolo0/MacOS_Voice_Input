@@ -14,6 +14,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var audioRecordingService: AudioRecordingService?
     private var transcriptionService: TranscriptionService?
     private var textCleanupService: TextCleanupService?
+    private var vadService: VADService?
     private var textInsertionService: TextInsertionService?
     private var targetApp: NSRunningApplication?
 
@@ -43,6 +44,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         audioRecordingService?.normalizeAudio = appState.audioNormalization
         transcriptionService = TranscriptionService(modelService: modelService!, appState: appState)
         textCleanupService = TextCleanupService()
+        vadService = VADService()
         textInsertionService = TextInsertionService()
 
         floatingPillManager = FloatingPillManager(appState: appState)
@@ -239,9 +241,36 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             // Transcribe, process, and insert asynchronously
             appState.recordingState = .transcribing
             Task {
+                // VAD trim
+                let trimmedSamples: [Float]
+                if let vad = self.vadService,
+                   let range = try? await vad.trim(samples: samples) {
+                    trimmedSamples = Array(samples[range])
+                    let savedMs = Double(samples.count - trimmedSamples.count) / 16.0
+                    DiagnosticLogger.shared.info(
+                        "VAD: trimmed \(String(format: "%.0f", savedMs))ms silence",
+                        category: "VAD"
+                    )
+                } else if self.vadService != nil {
+                    DiagnosticLogger.shared.info("VAD: no speech detected, skipping", category: "VAD")
+                    await MainActor.run { self.appState.recordingState = .idle }
+                    return
+                } else {
+                    trimmedSamples = samples
+                }
+
                 do {
                     guard let transcriptionService = self.transcriptionService else { return }
-                    let result = try await transcriptionService.transcribe(audioSamples: samples)
+                    var result = try await transcriptionService.transcribe(audioSamples: trimmedSamples)
+
+                    // Fallback: пустой результат после VAD trim → повтор на полных samples
+                    if result.text.isEmpty, trimmedSamples.count < samples.count {
+                        DiagnosticLogger.shared.warning(
+                            "Empty transcription on trimmed samples, retrying on full",
+                            category: "Transcription"
+                        )
+                        result = try await transcriptionService.transcribe(audioSamples: samples)
+                    }
 
                     let rawText = result.text
 
