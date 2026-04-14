@@ -13,7 +13,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var floatingPillManager: FloatingPillManager?
     private var audioRecordingService: AudioRecordingService?
     private var transcriptionService: TranscriptionService?
-    private var textProcessingService: TextProcessingService?
+    private var textCleanupService: TextCleanupService?
     private var textInsertionService: TextInsertionService?
     private var targetApp: NSRunningApplication?
 
@@ -42,7 +42,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         audioRecordingService?.selectedDeviceUID = appState.selectedAudioDeviceUID
         audioRecordingService?.normalizeAudio = appState.audioNormalization
         transcriptionService = TranscriptionService(modelService: modelService!, appState: appState)
-        textProcessingService = TextProcessingService()
+        textCleanupService = TextCleanupService()
         textInsertionService = TextInsertionService()
 
         floatingPillManager = FloatingPillManager(appState: appState)
@@ -243,8 +243,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                     guard let transcriptionService = self.transcriptionService else { return }
                     let result = try await transcriptionService.transcribe(audioSamples: samples)
 
-                    // Process text (filler removal, punctuation, capitalization)
-                    let processedText = self.textProcessingService?.process(result.text) ?? result.text
+                    let rawText = result.text
+
+                    let processedText: String
+                    if await MainActor.run(body: { self.appState.aiCleanupEnabled }),
+                       let cleanup = self.textCleanupService {
+                        do {
+                            processedText = try await cleanup.clean(rawText)
+                        } catch {
+                            DiagnosticLogger.shared.warning(
+                                "Cleanup failed (\(error.localizedDescription)), using raw",
+                                category: "Cleanup"
+                            )
+                            processedText = rawText
+                        }
+                    } else {
+                        processedText = rawText
+                    }
 
                     await MainActor.run {
                         self.appState.lastTranscription = processedText

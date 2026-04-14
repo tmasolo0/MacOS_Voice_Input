@@ -48,6 +48,12 @@ class AppState {
     }() {
         didSet { UserDefaults.standard.set(audioNormalization, forKey: "audioNormalization") }
     }
+    var aiCleanupEnabled: Bool = {
+        let stored = UserDefaults.standard.object(forKey: "aiCleanupEnabled")
+        return (stored as? Bool) ?? true
+    }() {
+        didSet { UserDefaults.standard.set(aiCleanupEnabled, forKey: "aiCleanupEnabled") }
+    }
     var useBeamSearch: Bool = UserDefaults.standard.bool(forKey: "useBeamSearch") {
         didSet { UserDefaults.standard.set(useBeamSearch, forKey: "useBeamSearch") }
     }
