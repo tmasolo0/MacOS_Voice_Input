@@ -27,11 +27,42 @@ class AppState {
     }() {
         didSet { UserDefaults.standard.set(hotkeyIsModifier, forKey: "hotkeyIsModifier") }
     }
-    var selectedPresets: [String] = (UserDefaults.standard.array(forKey: "selectedPresets") as? [String]) ?? [] {
-        didSet { UserDefaults.standard.set(selectedPresets, forKey: "selectedPresets") }
-    }
-    var customVocabulary: String = UserDefaults.standard.string(forKey: "customVocabulary") ?? "" {
+    var customVocabulary: String = {
+        if let stored = UserDefaults.standard.string(forKey: "customVocabulary"),
+           !stored.isEmpty {
+            return stored
+        }
+        return AppState.defaultVocabulary
+    }() {
         didSet { UserDefaults.standard.set(customVocabulary, forKey: "customVocabulary") }
+    }
+
+    static let defaultVocabulary = """
+    React, TypeScript, SwiftUI, macOS, iOS, Claude, Anthropic, \
+    MCP, API, JSON, useState, useEffect, async, await, actor, \
+    WhisperKit, Foundation Models, ANE, CoreML
+    """
+
+    static func mergeVocabulary(current: String, presetWords: [String]) -> String {
+        let currentWords = current
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+        let effective: [String]
+        if currentWords.isEmpty && presetWords.isEmpty {
+            effective = Self.defaultVocabulary
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+        } else {
+            effective = currentWords
+        }
+        let combined = effective + presetWords
+        var seen = Set<String>()
+        let unique = combined.filter { w in
+            let lower = w.lowercased()
+            return seen.insert(lower).inserted
+        }
+        return unique.joined(separator: ", ")
     }
     var transcriptionProvider: String = UserDefaults.standard.string(forKey: "transcriptionProvider") ?? "local" {
         didSet { UserDefaults.standard.set(transcriptionProvider, forKey: "transcriptionProvider") }

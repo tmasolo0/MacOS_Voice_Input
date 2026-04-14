@@ -117,26 +117,6 @@ struct SettingsView: View {
 
                 // MARK: - Словарь (local only)
                 Section("Словарь") {
-                    ForEach(VocabularyPreset.allCases) { preset in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Toggle(preset.displayName, isOn: Binding(
-                                get: { appState.selectedPresets.contains(preset.rawValue) },
-                                set: { enabled in
-                                    if enabled {
-                                        if !appState.selectedPresets.contains(preset.rawValue) {
-                                            appState.selectedPresets.append(preset.rawValue)
-                                        }
-                                    } else {
-                                        appState.selectedPresets.removeAll { $0 == preset.rawValue }
-                                    }
-                                }
-                            ))
-                            Text(preset.description)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-
                     ZStack(alignment: .topLeading) {
                         TextEditor(text: Binding(
                             get: { appState.customVocabulary },
