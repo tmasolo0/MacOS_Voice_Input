@@ -52,7 +52,7 @@ class AppState {
         }
     }
 
-    static let currentMigrationVersion = 2
+    static let currentMigrationVersion = 3
     private static let migrationVersionKey = "appMigrationVersion"
 
     func performMigrationIfNeeded() {
@@ -81,6 +81,12 @@ class AppState {
             let merged = Self.mergeVocabulary(current: current, presetWords: presets)
             UserDefaults.standard.set(merged, forKey: "customVocabulary")
             UserDefaults.standard.removeObject(forKey: "selectedPresets")
+        }
+
+        // v2→v3: чиним имя turbo-варианта WhisperKit → показываем окно миграции заново,
+        // чтобы юзер мог перезапустить скачивание с исправленным именем.
+        if stored == 2 {
+            UserDefaults.standard.removeObject(forKey: "v2MigrationUISeen")
         }
 
         UserDefaults.standard.set(Self.currentMigrationVersion, forKey: Self.migrationVersionKey)
@@ -185,8 +191,6 @@ class AppState {
         case .local:
             if case .ready = modelState { return true }
             return false
-        case .appleSpeech:
-            return true
         case .customServer:
             return !customEndpointURL.isEmpty
         case .cloud:

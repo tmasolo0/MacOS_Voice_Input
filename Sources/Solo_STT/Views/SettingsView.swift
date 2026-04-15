@@ -86,6 +86,7 @@ struct SettingsView: View {
                         Text(option.label).tag(option.value)
                     }
                 }
+
             }
             .onChange(of: appState.transcriptionProvider) { _, _ in
                 loadAPIKey()
@@ -332,7 +333,7 @@ struct SettingsView: View {
             apiKey = KeychainService.load(key: appState.cloudKeychainKey) ?? ""
         case .customServer:
             apiKey = KeychainService.load(key: appState.currentProvider.keychainKey) ?? ""
-        case .local, .appleSpeech:
+        case .local:
             apiKey = ""
         }
     }
